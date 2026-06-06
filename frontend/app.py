@@ -30,7 +30,7 @@ with col2:
                     data = {"target_job": job_input}
                     
                     # Connects directly to your backend endpoint "/analyze-skills"
-                    response = requests.post("http://localhost:8000/analyze-skills", data=data, files=files)
+                    response = requests.post("http://127.0.0.1:8000/analyze-skills", data=data, files=files)
                     
                     if response.status_code == 200:
                         result = response.json()

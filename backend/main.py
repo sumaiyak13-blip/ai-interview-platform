@@ -1,55 +1,106 @@
-from fastapi import FastAPI, UploadFile, File, Form
-from fastapi.middleware.cors import CORSMiddleware
-import pypdf
+import os
 import io
+import pdfplumber
+import json
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from dotenv import load_dotenv
+from google import genai
 
-# 1. This creates your backend server application
-app = FastAPI()
+# 1. Load the .env configuration
+load_dotenv()
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
-# 2. This fixes the CORS error before it even happens. 
+app = FastAPI(title="AI Mock Interview - Core Engine")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], 
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# 3. This is a "Mock API" (a fake endpoint). 
+api_key = os.getenv("GEMINI_API_KEY")
+if not api_key:
+    raise RuntimeError("Missing GEMINI_API_KEY.")
+
+try:
+    client = genai.Client(api_key=api_key)
+except Exception as e:
+    raise RuntimeError(f"Initialization Error: {e}")
+
+
 @app.get("/")
 def read_root():
-    return {"message": "Hello Member 1! Your backend skeleton is officially alive!"}
+    return {"message": "AI Backend is active!"}
 
-# 4. Another Mock API for your teammates to use later for testing the upload
-@app.get("/api/mock-resume")
-def mock_resume():
-    return {
-        "status": "success",
-        "ats_score": 85,
-        "skills_found": ["Python", "React", "Communication"]
-    }
 
-# 5. NEW: Your Skill Analyzer feature!
 @app.post("/analyze-skills")
 async def analyze_skills(target_job: str = Form(...), file: UploadFile = File(...)):
-    pdf_bytes = await file.read()
-    pdf_reader = pypdf.PdfReader(io.BytesIO(pdf_bytes))
-    extracted_text = ""
-    for page in pdf_reader.pages:
-        extracted_text += page.extract_text() or ""
+    try:
+        # Step A: Robust layout text extraction using pdfplumber
+        pdf_bytes = await file.read()
+        resume_text = ""
         
-    return {
-        "target_job": target_job,
-        "detected_gaps": [
-            "Missing hands-on experience with cloud deployment pipelines (CI/CD).",
-            "Lack of specialized automated testing workflows mentioned in the history."
-        ],
-        "action_items": [
-            "Take a short credential course covering cloud architecture mechanics.",
-            "Revise the experience text to emphasize metrics (e.g., 'Improved performance by 20%')."
-        ],
-        "current_eligibility": [
-            "Junior Project Engineer",
-            "Data Specialist / QA Tester"
-        ]
-    }
+        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+            for page in pdf.pages:
+                text = page.extract_text()
+                if text:
+                    resume_text += text + "\n"
+
+        # Check if text extraction completely failed (e.g., scanned image)
+        if not resume_text.strip():
+            return {
+                "target_job": target_job,
+                "detected_gaps": ["Unable to extract text. Your PDF might be a scanned image/photo."],
+                "action_items": ["Please use a text-based PDF generated directly from Word or Canva."],
+                "current_eligibility": ["Scanned Document Detected"]
+            }
+
+        # Step B: Optimized Prompt
+        prompt = f"""
+        You are an expert career recruiter. Analyze the following resume text against the target job: '{target_job}'.
+        
+        Resume Text:
+        {resume_text}
+        
+        You must return a valid JSON object. Do not include markdown wraps like ```json. 
+        Use this exact structural template:
+        {{
+            "detected_gaps": ["gap 1", "gap 2"],
+            "action_items": ["action 1", "action 2"],
+            "current_eligibility": ["role 1", "role 2"]
+        }}
+        """
+
+        # Step C: Generate content
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt
+        )
+
+        # Step D: Clean structural markdown strings
+        clean_text = response.text.strip()
+        if clean_text.startswith("```"):
+            clean_text = clean_text.split("```")[1]
+            if clean_text.startswith("json"):
+                clean_text = clean_text[4:]
+        clean_text = clean_text.strip()
+
+        # Step E: Safely parse JSON output
+        analysis = json.loads(clean_text)
+        return {
+            "target_job": target_job,
+            "detected_gaps": analysis.get("detected_gaps", ["No gaps identified."]),
+            "action_items": analysis.get("action_items", ["Profile alignment looks good."]),
+            "current_eligibility": analysis.get("current_eligibility", ["General Clinical Roles"])
+        }
+
+    except Exception as e:
+        return {
+            "target_job": target_job,
+            "detected_gaps": ["Parsing issue encountered. Review text structure."],
+            "action_items": ["Verify file translation integrity or try a simpler format."],
+            "current_eligibility": ["Alternative Assessment Required"]
+        }
