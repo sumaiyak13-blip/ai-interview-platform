@@ -7,6 +7,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from google import genai
 
+from resume_processor import create_resume_summary
+
 # 1. Load the .env configuration
 load_dotenv()
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
@@ -104,3 +106,63 @@ async def analyze_skills(target_job: str = Form(...), file: UploadFile = File(..
             "action_items": ["Verify file translation integrity or try a simpler format."],
             "current_eligibility": ["Alternative Assessment Required"]
         }
+    
+    @app.post("/extract-resume")
+async def extract_resume(file: UploadFile = File(...)):
+
+    try:
+        pdf_bytes = await file.read()
+
+        resume_text = ""
+
+        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+            for page in pdf.pages:
+                text = page.extract_text()
+                if text:
+                    resume_text += text + "\n"
+
+        prompt = f"""
+        Extract the following information from this resume.
+
+        Resume:
+        {resume_text}
+
+        Return ONLY valid JSON.
+
+        Format:
+
+        {{
+            "name": "",
+            "education": "",
+            "skills": [],
+            "projects": [],
+            "certifications": [],
+            "years_of_experience": 0
+        }}
+        """
+
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt
+        )
+
+        clean_text = response.text.strip()
+
+        if clean_text.startswith("```"):
+            clean_text = clean_text.split("```")[1]
+
+            if clean_text.startswith("json"):
+                clean_text = clean_text[4:]
+
+        clean_text = clean_text.strip()
+
+        extracted_data = json.loads(clean_text)
+
+        return extracted_data
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
+    

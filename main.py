@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 from google import genai
 
+
 # Load environment variables from the .env file
 #load_dotenv()
 # Temporary Debugging Code
