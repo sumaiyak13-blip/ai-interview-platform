@@ -107,4 +107,4 @@ async def analyze_skills(target_job: str = Form(...), file: UploadFile = File(..
 
 if __name__ == "__main__":
     # Force it to run on local loopback to guarantee Streamlit connection
-    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
+    uvicorn.run("skill_gap_backend:app", host="127.0.0.1", port=8000, reload=True)
